@@ -69,25 +69,36 @@
 
 typedef void *(*bbr3_kmalloc_fn_t)(size_t size, gfp_t flags);
 typedef void (*bbr3_kfree_fn_t)(const void *ptr);
-typedef void *(*bbr3_memset_fn_t)(void *ptr, int value, size_t size);
 typedef u32 (*bbr3_random_u32_fn_t)(void);
 
 static bbr3_kmalloc_fn_t kf___kmalloc;
 static bbr3_kfree_fn_t kf_kfree;
-static bbr3_memset_fn_t kf_memset;
 static bbr3_random_u32_fn_t kf_get_random_u32;
 static volatile unsigned long *kv_jiffies;
+
+#define BBR3_LOG(fmt, ...) \
+    do { \
+        if (kp_printk) \
+            kp_printk("[bbr3-kpm] " fmt, ##__VA_ARGS__); \
+    } while (0)
+
+static inline void bbr3_zero_bytes(void *ptr, size_t size)
+{
+    volatile unsigned char *p = (volatile unsigned char *)ptr;
+    while (size--)
+        *p++ = 0;
+}
 
 static inline void *bbr3_kzalloc(size_t size, gfp_t flags)
 {
     void *ptr;
 
-    if (!kf___kmalloc || !kf_memset)
+    if (!kf___kmalloc)
         return NULL;
 
     ptr = kf___kmalloc(size, flags);
     if (ptr)
-        kf_memset(ptr, 0, size);
+        bbr3_zero_bytes(ptr, size);
     return ptr;
 }
 
@@ -129,18 +140,27 @@ static inline u32 bbr3_random_u32_below(u32 ceil)
 
 static int bbr3_resolve_kernel_deps(void)
 {
-    if (!kp_kallsyms_lookup_name)
+    if (!kp_kallsyms_lookup_name) {
+        BBR3_LOG("stage=resolve kallsyms_lookup_name=NULL\n");
         return -ENOENT;
+    }
 
     kv_jiffies = (volatile unsigned long *)kp_kallsyms_lookup_name("jiffies");
+    if (!kv_jiffies)
+        kv_jiffies = (volatile unsigned long *)kp_kallsyms_lookup_name("jiffies_64");
+
     kf___kmalloc = (bbr3_kmalloc_fn_t)kp_kallsyms_lookup_name("__kmalloc");
     kf_kfree = (bbr3_kfree_fn_t)kp_kallsyms_lookup_name("kfree");
-    kf_memset = (bbr3_memset_fn_t)kp_kallsyms_lookup_name("memset");
     kf_get_random_u32 =
         (bbr3_random_u32_fn_t)kp_kallsyms_lookup_name("get_random_u32");
 
-    if (!kv_jiffies || !kf___kmalloc || !kf_kfree ||
-        !kf_memset || !kf_get_random_u32)
+    BBR3_LOG("stage=resolve jiffies=%d kmalloc=%d kfree=%d rng=%d\n",
+             kv_jiffies ? 1 : 0,
+             kf___kmalloc ? 1 : 0,
+             kf_kfree ? 1 : 0,
+             kf_get_random_u32 ? 1 : 0);
+
+    if (!kv_jiffies || !kf___kmalloc || !kf_kfree || !kf_get_random_u32)
         return -ENOENT;
 
     return 0;
@@ -2614,7 +2634,7 @@ static void bbr_unregister(void)
 }
 
 KPM_NAME("kpm-bbr3-pjz110");
-KPM_VERSION("0.2.0");
+KPM_VERSION("0.2.0-h1");
 KPM_LICENSE("Dual BSD/GPL");
 KPM_AUTHOR("Axymorrsen + BBR upstream");
 KPM_DESCRIPTION("Real BBRv3 congestion control KPM for OnePlus 13 PJZ110 Linux 6.6");
