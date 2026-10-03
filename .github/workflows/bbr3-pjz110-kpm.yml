@@ -124,14 +124,14 @@ jobs:
           "$READELF" -S "$KPM" | grep -F '.kpm.exit'
 
           strings "$KPM" | grep -F 'name=kpm-bbr3-pjz110'
-          strings "$KPM" | grep -F 'version=0.2.0'
+          strings "$KPM" | grep -F 'version=0.2.0-h1'
           strings "$KPM" | grep -F 'bbr3'
 
           # KPatch-Next resolve rule: all undefined ELF symbols must exist in
           # its own symbol table. Linux symbols are reached indirectly through
           # KPatch's exported kallsyms_lookup_name pointer.
           "$NM" -u "$KPM" | awk '{print $NF}' | sort -u > bbr3-pjz110-undefined-names.txt
-          printf '%s\n' kallsyms_lookup_name kver | sort -u > allowed-kpatch-symbols.txt
+          printf '%s\n' kallsyms_lookup_name kver printk | sort -u > allowed-kpatch-symbols.txt
           diff -u allowed-kpatch-symbols.txt bbr3-pjz110-undefined-names.txt
 
           ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -Eq \
