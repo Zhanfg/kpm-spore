@@ -2660,33 +2660,50 @@ static long bbr3_kpm_init(const char *args, const char *event, void *__user rese
 {
     int ret;
 
-    (void)event;
     (void)reserved;
 
-    if (kver < 0x60600 || kver >= 0x60700)
-        return -ENODEV;
+    BBR3_LOG("init begin event=%s kver=0x%x\n",
+             event ? event : "<null>", kver);
+
+    if (kver < 0x60600 || kver >= 0x60700) {
+        BBR3_LOG("stage=version unsupported kver=0x%x\n", kver);
+        return 0;
+    }
 
     bbr_ecn_low = false;
     if (bbr3_args_enable_ecn_low(args))
         bbr_ecn_low = true;
 
     ret = bbr3_resolve_kernel_deps();
-    if (ret)
-        return ret;
+    if (ret) {
+        BBR3_LOG("stage=resolve failed ret=%d\n", ret);
+        return 0;
+    }
 
     kf_tcp_register_congestion_control =
         (bbr3_register_fn_t)kp_kallsyms_lookup_name("tcp_register_congestion_control");
     kf_tcp_unregister_congestion_control =
         (bbr3_unregister_fn_t)kp_kallsyms_lookup_name("tcp_unregister_congestion_control");
 
+    BBR3_LOG("stage=tcp-symbols register=%d unregister=%d\n",
+             kf_tcp_register_congestion_control ? 1 : 0,
+             kf_tcp_unregister_congestion_control ? 1 : 0);
+
     if (!kf_tcp_register_congestion_control ||
-        !kf_tcp_unregister_congestion_control)
-        return -ENOENT;
+        !kf_tcp_unregister_congestion_control) {
+        BBR3_LOG("stage=tcp-symbols missing\n");
+        return 0;
+    }
 
     ret = bbr_register();
-    if (ret)
-        return ret;
+    BBR3_LOG("stage=register ret=%d registered=%d ecn_low=%d\n",
+             ret, bbr3_registered ? 1 : 0, bbr_ecn_low ? 1 : 0);
 
+    /*
+     * Diagnostic hotfix: keep KPM load itself successful even when BBR3
+     * registration cannot complete. This cleanly separates loader failures
+     * from runtime symbol/registration failures in KPatch-Next.
+     */
     return 0;
 }
 
