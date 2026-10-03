@@ -1,4 +1,4 @@
-name: PJZ110 BBRv3 KPM
+name: PJZ110 BBRv3 KPatch-Next
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       - .github/workflows/bbr3-pjz110-kpm.yml
   push:
     branches:
-      - feat/pjz110-bbr3-kpm
+      - feat/pjz110-bbr3-kpatch-next
     paths:
       - modules/bbr3_pjz110/**
       - .github/workflows/bbr3-pjz110-kpm.yml
@@ -19,12 +19,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: bbr3-pjz110-kpm-${{ github.ref }}
+  group: bbr3-pjz110-kpatch-next-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   ONEPLUS_KERNEL_REPO: https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git
   ONEPLUS_KERNEL_REV: e1b346b6b4f4096eb342ae3684838a942fd6f6c4
+  KPATCH_NEXT_REPO: https://github.com/KernelSU-Next/KPatch-Next.git
+  KPATCH_NEXT_REV: 456744b29efb9989445463ab29e368fa59a103c4
 
 jobs:
   build:
@@ -33,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install kernel build dependencies
+      - name: Install build dependencies
         shell: bash
         run: |
           set -euxo pipefail
@@ -41,6 +43,20 @@ jobs:
           sudo apt-get install -y \
             bc binutils-aarch64-linux-gnu bison build-essential clang-18 flex git \
             libelf-dev libssl-dev lld-18 llvm-18 pahole python3 rsync
+
+      - name: Pin KPatch-Next ABI source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KP="$GITHUB_WORKSPACE/.ci-kpatch-next"
+          git init "$KP"
+          git -C "$KP" remote add origin "$KPATCH_NEXT_REPO"
+          git -C "$KP" fetch --depth=1 origin "$KPATCH_NEXT_REV"
+          git -C "$KP" checkout --detach FETCH_HEAD
+          test "$(git -C "$KP" rev-parse HEAD)" = "$KPATCH_NEXT_REV"
+          grep -F 'KP_EXPORT_SYMBOL(kallsyms_lookup_name);' "$KP/kernel/base/start.c"
+          grep -F 'KP_EXPORT_SYMBOL(kver);' "$KP/kernel/base/start.c"
+          grep -F 'if (!addr)' "$KP/kernel/patch/module/module.c"
 
       - name: Fetch pinned OnePlus kernel source
         shell: bash
@@ -68,76 +84,120 @@ jobs:
           make -C "$KERNEL" ARCH=arm64 LLVM=-18 LLVM_IAS=1 olddefconfig
           make -C "$KERNEL" -j"$(nproc)" ARCH=arm64 LLVM=-18 LLVM_IAS=1 modules_prepare
 
-      - name: Compile BBRv3 with OnePlus Kbuild
+      - name: Compile real BBRv3 core
         shell: bash
         run: |
           set -euxo pipefail
           KERNEL="$GITHUB_WORKSPACE/.ci-kernel"
           MOD="$GITHUB_WORKSPACE/modules/bbr3_pjz110"
 
-          # Build only the relocatable module object. Do not enter modpost:
-          # modpost is a Linux .ko packaging stage and intentionally rejects
-          # KPM metadata because there is no MODULE_LICENSE()/__this_module.
+          # Kbuild is used only for the exact PJZ110 TCP type/layout environment.
+          # We stop before modpost and later enforce KPatch-Next's much smaller
+          # relocation/symbol ABI on the relocatable object.
           make -C "$KERNEL" -j"$(nproc)" \
             ARCH=arm64 LLVM=-18 LLVM_IAS=1 \
             M="$MOD" bbr3_pjz110.o
 
           test -s "$MOD/bbr3_pjz110.o"
           mkdir -p build/bbr3_pjz110
-          cp "$MOD/bbr3_pjz110.o" build/bbr3_pjz110/bbr3_pjz110.kpm
+          cp "$MOD/bbr3_pjz110.o" build/bbr3_pjz110/bbr3_pjz110_knext.kpm
 
-      - name: Strip and audit KPM
+      - name: Normalize for KPatch-Next loader
         shell: bash
         run: |
           set -euxo pipefail
-          KPM=build/bbr3_pjz110/bbr3_pjz110.kpm
-          STRIP=llvm-strip-18
-          READELF=llvm-readelf-18
-          NM=llvm-nm-18
+          KPM=build/bbr3_pjz110/bbr3_pjz110_knext.kpm
+          OBJCOPY=llvm-objcopy-18
 
-          "$STRIP" -g --strip-unneeded --strip-debug \
+          # KPatch-loaded code is injected after Linux boot and never passes
+          # through the kernel alternatives/BUG/unwind registration stages.
+          "$OBJCOPY" \
+            --remove-section=.altinstructions \
+            --remove-section=.rela.altinstructions \
+            --remove-section=.altinstr_replacement \
+            --remove-section=__bug_table \
+            --remove-section=.rela__bug_table \
+            --remove-section=.eh_frame \
+            --remove-section=.rela.eh_frame \
             --remove-section=.comment \
             --remove-section=.note.GNU-stack \
             "$KPM"
 
-          "$READELF" -h "$KPM" | tee bbr3-pjz110-elf.txt
-          "$READELF" -S "$KPM" | tee bbr3-pjz110-sections.txt
-          "$NM" -u "$KPM" | tee bbr3-pjz110-undefined.txt
+          "$OBJCOPY" --strip-symbol=alt_cb_patch_nops "$KPM" 2>/dev/null || true
+
+      - name: KPatch-Next ABI audit
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KPM=build/bbr3_pjz110/bbr3_pjz110_knext.kpm
+          READELF=llvm-readelf-18
+          NM=llvm-nm-18
+
+          "$READELF" -h "$KPM" | tee bbr3-pjz110-knext-elf.txt
+          "$READELF" -S "$KPM" | tee bbr3-pjz110-knext-sections.txt
+          "$READELF" -rW "$KPM" | tee bbr3-pjz110-knext-relocs.txt
+          "$NM" -u "$KPM" | tee bbr3-pjz110-knext-undefined.txt
 
           "$READELF" -h "$KPM" | grep -F 'REL (Relocatable file)'
           "$READELF" -h "$KPM" | grep -F 'AArch64'
+          "$READELF" -S "$KPM" | grep -F '.symtab'
+          "$READELF" -S "$KPM" | grep -F '.strtab'
           "$READELF" -S "$KPM" | grep -F '.kpm.info'
           "$READELF" -S "$KPM" | grep -F '.kpm.init'
           "$READELF" -S "$KPM" | grep -F '.kpm.exit'
 
-          strings "$KPM" | grep -F 'name=kpm-bbr3-pjz110'
-          strings "$KPM" | grep -F 'bbr3'
+          strings "$KPM" | grep -F 'name=kpm-bbr3-pjz110-knext'
+          strings "$KPM" | grep -F 'version=0.2.0'
 
-          # Registration must be dynamic through KernelPatch, never a static
-          # KMI/module import as in the old KO path.
-          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_register_congestion_control'
-          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_unregister_congestion_control'
+          # KPatch-Next's loader resolves SHN_UNDEF only from its own export
+          # table. For this module we deliberately allow only these two ABI
+          # imports; all Linux kernel symbols must be resolved dynamically
+          # through the exported kallsyms_lookup_name function-pointer.
+          awk '{print $NF}' bbr3-pjz110-knext-undefined.txt | sed '/^$/d' | sort -u > undef.names
+          cat > allowed.names <<'EOF'
+          kallsyms_lookup_name
+          kver
+          EOF
+          sed -i 's/^[[:space:]]*//' allowed.names
+          sort -u -o allowed.names allowed.names
+          echo "Undefined symbols:"
+          cat undef.names
+          echo "Allowed KPatch-Next imports:"
+          cat allowed.names
+          test -z "$(comm -23 undef.names allowed.names)"
 
-          # A KPM must not carry Linux module entry/refcount machinery.
+          # Linux module mechanics must never survive into a KPM.
           ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx '__this_module'
           ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx 'init_module'
           ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx 'cleanup_module'
+
+          # These are the exact failure signatures from the incompatible v0.1
+          # build and must remain absent.
+          for sym in \
+            __stack_chk_fail __warn_printk alt_cb_patch_nops \
+            get_random_u32 get_random_u8 jiffies kfree \
+            kmalloc_caches kmalloc_trace strstr \
+            tcp_register_congestion_control tcp_unregister_congestion_control
+          do
+            ! grep -qx "$sym" undef.names
+          done
 
       - name: Package
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p dist
-          cp build/bbr3_pjz110/bbr3_pjz110.kpm dist/
+          cp build/bbr3_pjz110/bbr3_pjz110_knext.kpm dist/
           cp modules/bbr3_pjz110/README.md dist/
-          cp bbr3-pjz110-elf.txt dist/
-          cp bbr3-pjz110-sections.txt dist/
-          cp bbr3-pjz110-undefined.txt dist/
-          (cd dist && sha256sum bbr3_pjz110.kpm > bbr3_pjz110.kpm.sha256)
+          cp bbr3-pjz110-knext-elf.txt dist/
+          cp bbr3-pjz110-knext-sections.txt dist/
+          cp bbr3-pjz110-knext-relocs.txt dist/
+          cp bbr3-pjz110-knext-undefined.txt dist/
+          (cd dist && sha256sum bbr3_pjz110_knext.kpm > bbr3_pjz110_knext.kpm.sha256)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pjz110-bbr3-kpm
+          name: pjz110-bbr3-kpatch-next
           path: dist/
           if-no-files-found: error
           retention-days: 30
