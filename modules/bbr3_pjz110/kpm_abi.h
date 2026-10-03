@@ -40,4 +40,13 @@ typedef long (*kpm_exitcall_t)(void *reserved);
 /* Symbols exported by the KernelPatch runtime to KPM relocations. */
 extern unsigned int kver;
 
+/*
+ * KPatch-Next exports a function-pointer variable named
+ * "kallsyms_lookup_name".  Give it a different C identifier so it does not
+ * collide with the Linux kernel header's function declaration while keeping
+ * the ELF undefined symbol name exactly what the KPM loader expects.
+ */
+extern unsigned long (*kp_kallsyms_lookup_name)(const char *name)
+    __asm__("kallsyms_lookup_name");
+
 #endif
