@@ -265,7 +265,6 @@ def main() -> None:
 
     include = '#include "bbr_compat.h"'
     require(text, include, "bbr_compat include")
-    text = text.replace(include, include + "\n" + SUPPORT, 1)
 
     text = text.replace("tcp_jiffies32", "bbr3_tcp_jiffies32()")
     text = text.replace("kzalloc(sizeof(*bbr), GFP_ATOMIC)",
@@ -317,6 +316,11 @@ def main() -> None:
 """
     require(text, release_old, "BBRv3 release")
     text = text.replace(release_old, release_new, 1)
+
+    # Insert the bridge only after token-level source rewrites. Otherwise a
+    # rewrite such as tcp_jiffies32 -> bbr3_tcp_jiffies32() would rewrite the
+    # bridge's own helper names a second time.
+    text = text.replace(include, include + "\n" + SUPPORT, 1)
 
     marker = "module_init(bbr_register);"
     require(text, marker, "module_init")
