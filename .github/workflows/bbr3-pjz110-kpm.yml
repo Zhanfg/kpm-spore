@@ -75,9 +75,6 @@ jobs:
           KERNEL="$GITHUB_WORKSPACE/.ci-kernel"
           MOD="$GITHUB_WORKSPACE/modules/bbr3_pjz110"
 
-          # Build only the relocatable module object. Do not enter modpost:
-          # modpost is a Linux .ko packaging stage and intentionally rejects
-          # KPM metadata because there is no MODULE_LICENSE()/__this_module.
           make -C "$KERNEL" -j"$(nproc)" \
             ARCH=arm64 LLVM=-18 LLVM_IAS=1 \
             M="$MOD" bbr3_pjz110.o
@@ -86,7 +83,7 @@ jobs:
           mkdir -p build/bbr3_pjz110
           cp "$MOD/bbr3_pjz110.o" build/bbr3_pjz110/bbr3_pjz110.kpm
 
-      - name: Strip and audit KPM
+      - name: Strip and audit KPatch-Next KPM
         shell: bash
         run: |
           set -euxo pipefail
@@ -96,9 +93,9 @@ jobs:
           READELF=llvm-readelf-18
           NM=llvm-nm-18
 
-          # KPatch-Next loads an ET_REL directly and never runs Linux boot-time
-          # alternatives/unwind/module metadata. Keep the universal fallback
-          # instructions in .text and drop only their boot-time metadata.
+          # KPatch-Next never runs Linux boot-time alternatives/unwind/module
+          # metadata for a dynamically loaded ET_REL KPM. Preserve the
+          # universal fallback instructions in .text and drop only metadata.
           "$OBJCOPY" \
             --remove-section=.altinstructions \
             --remove-section=.rela.altinstructions \
@@ -127,18 +124,19 @@ jobs:
           "$READELF" -S "$KPM" | grep -F '.kpm.exit'
 
           strings "$KPM" | grep -F 'name=kpm-bbr3-pjz110'
+          strings "$KPM" | grep -F 'version=0.2.0'
           strings "$KPM" | grep -F 'bbr3'
 
-          # KPatch-Next's KPM loader resolves undefined symbols only through
-          # its own symbol table. All Linux symbols must therefore be reached
-          # indirectly through the exported kallsyms_lookup_name pointer.
+          # KPatch-Next resolve rule: all undefined ELF symbols must exist in
+          # its own symbol table. Linux symbols are reached indirectly through
+          # KPatch's exported kallsyms_lookup_name pointer.
           "$NM" -u "$KPM" | awk '{print $NF}' | sort -u > bbr3-pjz110-undefined-names.txt
           printf '%s\n' kallsyms_lookup_name kver | sort -u > allowed-kpatch-symbols.txt
           diff -u allowed-kpatch-symbols.txt bbr3-pjz110-undefined-names.txt
 
-          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_register_congestion_control'
-          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_unregister_congestion_control'
-          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -Eq '^(jiffies|__kmalloc|kfree|memset|get_random_u32|__warn_printk|__stack_chk_fail|alt_cb_patch_nops)
+          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -Eq \
+            '^(jiffies|__kmalloc|kfree|memset|get_random_u32|__warn_printk|__stack_chk_fail|alt_cb_patch_nops|tcp_register_congestion_control|tcp_unregister_congestion_control)$'
+
           # A KPM must not carry Linux module entry/refcount machinery.
           ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx '__this_module'
           ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx 'init_module'
@@ -160,32 +158,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pjz110-bbr3-kpm
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
-
-
-          # A KPM must not carry Linux module entry/refcount machinery.
-          ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx '__this_module'
-          ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx 'init_module'
-          ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx 'cleanup_module'
-
-      - name: Package
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p dist
-          cp build/bbr3_pjz110/bbr3_pjz110.kpm dist/
-          cp modules/bbr3_pjz110/README.md dist/
-          cp bbr3-pjz110-elf.txt dist/
-          cp bbr3-pjz110-sections.txt dist/
-          cp bbr3-pjz110-undefined.txt dist/
-          (cd dist && sha256sum bbr3_pjz110.kpm > bbr3_pjz110.kpm.sha256)
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pjz110-bbr3-kpm
+          name: pjz110-bbr3-kpm-kpatch-next
           path: dist/
           if-no-files-found: error
           retention-days: 30
