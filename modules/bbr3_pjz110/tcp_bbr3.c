@@ -57,14 +57,21 @@
  * otherwise TCP stack falls back to an internal pacing using one high
  * resolution timer per TCP socket and may use more resources.
  */
+/*
+ * KPatch-Next exports kallsyms_lookup_name as a function-pointer VARIABLE.
+ * Hide the Linux function declaration while importing the real PJZ110 TCP
+ * types, then expose the KPatch ABI declaration from kpm_abi.h.
+ */
+#define kallsyms_lookup_name __bbr3_linux_kallsyms_lookup_name_decl
 #include <linux/module.h>
-#include "kpm_abi.h"
 #include <net/tcp.h>
 #include <linux/inet_diag.h>
 #include <linux/inet.h>
 #include <linux/random.h>
 #include <linux/win_minmax.h>
+#undef kallsyms_lookup_name
 
+#include "kpm_abi.h"
 #include "bbr_compat.h"
 
 typedef int (*bbr3_register_fn_t)(struct tcp_congestion_ops *);
@@ -72,7 +79,98 @@ typedef void (*bbr3_unregister_fn_t)(struct tcp_congestion_ops *);
 
 static bbr3_register_fn_t kf_tcp_register_congestion_control;
 static bbr3_unregister_fn_t kf_tcp_unregister_congestion_control;
+
+typedef void *(*bbr3_kmalloc_fn_t)(size_t size, gfp_t flags);
+typedef void (*bbr3_kfree_fn_t)(const void *ptr);
+typedef u32 (*bbr3_random_u32_fn_t)(void);
+
+static bbr3_kmalloc_fn_t kf___kmalloc;
+static bbr3_kfree_fn_t kf_kfree;
+static bbr3_random_u32_fn_t kf_get_random_u32;
+static volatile unsigned long *kf_jiffies;
 static bool bbr3_registered;
+
+/*
+ * Keep every hot-path kernel dependency behind addresses resolved once from
+ * KPatch-Next's exported kallsyms_lookup_name function-pointer.
+ */
+static void *bbr3_kzalloc_atomic(size_t size)
+{
+    void *p;
+
+    if (!kf___kmalloc)
+        return NULL;
+    p = kf___kmalloc(size, GFP_ATOMIC);
+    if (p)
+        __builtin_memset(p, 0, size);
+    return p;
+}
+
+static void bbr3_kfree_state(void *p)
+{
+    if (p && kf_kfree)
+        kf_kfree(p);
+}
+
+static u32 bbr3_random_u32_below(u32 ceiling)
+{
+    u32 r, threshold;
+
+    if (ceiling <= 1)
+        return 0;
+
+    if (kf_get_random_u32) {
+        /* Rejection sampling avoids modulo bias. */
+        threshold = (u32)(-ceiling) % ceiling;
+        do {
+            r = kf_get_random_u32();
+        } while (r < threshold);
+        return r % ceiling;
+    }
+
+    /* Fallback is only for probe timing jitter, never cryptography. */
+    r = kf_jiffies ? (u32)(*kf_jiffies) : 0x9e3779b9U;
+    r ^= r << 13;
+    r ^= r >> 17;
+    r ^= r << 5;
+    return r % ceiling;
+}
+
+static int bbr3_contains(const char *haystack, const char *needle)
+{
+    const char *h, *n;
+
+    if (!haystack || !needle || !*needle)
+        return 0;
+
+    for (; *haystack; haystack++) {
+        for (h = haystack, n = needle; *h && *n && *h == *n; h++, n++)
+            ;
+        if (!*n)
+            return 1;
+    }
+    return 0;
+}
+
+/*
+ * KPatch-loaded text never participates in Linux boot-time alternatives.
+ * Suppress BBR diagnostic WARN sites and use the baseline instruction path.
+ */
+#ifdef WARN_ONCE
+#undef WARN_ONCE
+#endif
+#define WARN_ONCE(condition, fmt, ...) (!!(condition))
+#ifdef WARN_ON_ONCE
+#undef WARN_ON_ONCE
+#endif
+#define WARN_ON_ONCE(condition) (!!(condition))
+
+#ifdef tcp_jiffies32
+#undef tcp_jiffies32
+#endif
+#define tcp_jiffies32 ((u32)(kf_jiffies ? *kf_jiffies : 0))
+
+#define get_random_u32_below bbr3_random_u32_below
 
 static inline void bbr3_o13_plb_update_state(const struct sock *sk,
                                               struct tcp_plb_state *plb,
@@ -2154,7 +2252,7 @@ __bpf_kfunc static void bbr_init(struct sock *sk)
 	 * softirq context (syn-ack), hence GFP_ATOMIC.
 	 */
 	if (unlikely(!bbr)) {
-		bbr = kzalloc(sizeof(*bbr), GFP_ATOMIC);
+		bbr = bbr3_kzalloc_atomic(sizeof(*bbr));
 		if (!bbr)
 			return;  /* all entry points NULL-check bbr_ca() */
 		*bbr_ca_slot(sk) = bbr;
@@ -2249,7 +2347,7 @@ static void bbr_release(struct sock *sk)
 {
 	struct bbr **slot = bbr_ca_slot(sk);
 
-	kfree(*slot);
+	bbr3_kfree_state(*slot);
 	*slot = NULL;
 }
 
@@ -2499,14 +2597,14 @@ static int bbr_register(void)
 
     BUILD_BUG_ON(sizeof(struct bbr *) > ICSK_CA_PRIV_SIZE);
 
-    if (!kf_tcp_register_congestion_control) {
+    if (!kallsyms_lookup_name)
+        return -ENOENT;
+    if (!kf_tcp_register_congestion_control)
         kf_tcp_register_congestion_control =
             (bbr3_register_fn_t)kallsyms_lookup_name("tcp_register_congestion_control");
-    }
-    if (!kf_tcp_unregister_congestion_control) {
+    if (!kf_tcp_unregister_congestion_control)
         kf_tcp_unregister_congestion_control =
             (bbr3_unregister_fn_t)kallsyms_lookup_name("tcp_unregister_congestion_control");
-    }
     if (!kf_tcp_register_congestion_control ||
         !kf_tcp_unregister_congestion_control)
         return -ENOENT;
@@ -2534,11 +2632,11 @@ static void bbr_unregister(void)
     }
 }
 
-KPM_NAME("kpm-bbr3-pjz110");
-KPM_VERSION("0.1.0");
+KPM_NAME("kpm-bbr3-pjz110-knext");
+KPM_VERSION("0.2.0");
 KPM_LICENSE("Dual BSD/GPL");
 KPM_AUTHOR("Axymorrsen + BBR upstream");
-KPM_DESCRIPTION("Real BBRv3 congestion control KPM for OnePlus 13 PJZ110 Linux 6.6");
+KPM_DESCRIPTION("Real BBRv3 KPM for PJZ110 Linux 6.6 / KPatch-Next ABI");
 
 static long bbr3_kpm_init(const char *args, const char *event, void *__user reserved)
 {
@@ -2551,16 +2649,26 @@ static long bbr3_kpm_init(const char *args, const char *event, void *__user rese
         return -ENODEV;
 
     bbr_ecn_low = false;
-    if (args && strstr(args, "ecn_low=1"))
+    if (args && bbr3_contains(args, "ecn_low=1"))
         bbr_ecn_low = true;
+
+    if (!kallsyms_lookup_name)
+        return -ENOENT;
 
     kf_tcp_register_congestion_control =
         (bbr3_register_fn_t)kallsyms_lookup_name("tcp_register_congestion_control");
     kf_tcp_unregister_congestion_control =
         (bbr3_unregister_fn_t)kallsyms_lookup_name("tcp_unregister_congestion_control");
+    kf___kmalloc = (bbr3_kmalloc_fn_t)kallsyms_lookup_name("__kmalloc");
+    kf_kfree = (bbr3_kfree_fn_t)kallsyms_lookup_name("kfree");
+    kf_get_random_u32 =
+        (bbr3_random_u32_fn_t)kallsyms_lookup_name("get_random_u32");
+    kf_jiffies =
+        (volatile unsigned long *)kallsyms_lookup_name("jiffies");
 
     if (!kf_tcp_register_congestion_control ||
-        !kf_tcp_unregister_congestion_control)
+        !kf_tcp_unregister_congestion_control ||
+        !kf___kmalloc || !kf_kfree || !kf_jiffies)
         return -ENOENT;
 
     ret = bbr_register();
