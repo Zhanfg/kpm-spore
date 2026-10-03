@@ -49,4 +49,7 @@ extern unsigned int kver;
 extern unsigned long (*kp_kallsyms_lookup_name)(const char *name)
     __asm__("kallsyms_lookup_name");
 
+extern void (*kp_printk)(const char *fmt, ...)
+    __asm__("printk");
+
 #endif
