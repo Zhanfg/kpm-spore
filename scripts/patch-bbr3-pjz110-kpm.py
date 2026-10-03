@@ -322,8 +322,8 @@ def main() -> None:
     # bridge's own helper names a second time.
     text = text.replace(include, include + "\n" + SUPPORT, 1)
 
-    marker = "module_init(bbr_register);"
-    require(text, marker, "module_init")
+    marker = "static void __exit bbr_unregister(void)"
+    require(text, marker, "Linux module exit")
     text = text[:text.index(marker)] + FOOTER + "\n"
 
     out.parent.mkdir(parents=True, exist_ok=True)
