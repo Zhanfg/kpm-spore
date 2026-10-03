@@ -118,6 +118,7 @@ jobs:
           "$READELF" -h "$KPM" | tee bbr3-pjz110-elf.txt
           "$READELF" -S "$KPM" | tee bbr3-pjz110-sections.txt
           "$NM" -u "$KPM" | tee bbr3-pjz110-undefined.txt
+          "$READELF" -r --wide "$KPM" | tee bbr3-pjz110-relocations.txt
 
           "$READELF" -h "$KPM" | grep -F 'REL (Relocatable file)'
           "$READELF" -h "$KPM" | grep -F 'AArch64'
@@ -154,6 +155,7 @@ jobs:
           cp bbr3-pjz110-sections.txt dist/
           cp bbr3-pjz110-undefined.txt dist/
           cp bbr3-pjz110-undefined-names.txt dist/
+          cp bbr3-pjz110-relocations.txt dist/
           (cd dist && sha256sum bbr3_pjz110.kpm > bbr3_pjz110.kpm.sha256)
 
       - uses: actions/upload-artifact@v4
