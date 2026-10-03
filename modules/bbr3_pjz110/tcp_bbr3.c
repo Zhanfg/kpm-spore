@@ -132,12 +132,12 @@ static int bbr3_resolve_kernel_deps(void)
     if (!kp_kallsyms_lookup_name)
         return -ENOENT;
 
-    kv_jiffies = (volatile unsigned long *)kp_kp_kallsyms_lookup_name("jiffies");
-    kf___kmalloc = (bbr3_kmalloc_fn_t)kp_kp_kallsyms_lookup_name("__kmalloc");
-    kf_kfree = (bbr3_kfree_fn_t)kp_kp_kallsyms_lookup_name("kfree");
-    kf_memset = (bbr3_memset_fn_t)kp_kp_kallsyms_lookup_name("memset");
+    kv_jiffies = (volatile unsigned long *)kp_kallsyms_lookup_name("jiffies");
+    kf___kmalloc = (bbr3_kmalloc_fn_t)kp_kallsyms_lookup_name("__kmalloc");
+    kf_kfree = (bbr3_kfree_fn_t)kp_kallsyms_lookup_name("kfree");
+    kf_memset = (bbr3_memset_fn_t)kp_kallsyms_lookup_name("memset");
     kf_get_random_u32 =
-        (bbr3_random_u32_fn_t)kp_kp_kallsyms_lookup_name("get_random_u32");
+        (bbr3_random_u32_fn_t)kp_kallsyms_lookup_name("get_random_u32");
 
     if (!kv_jiffies || !kf___kmalloc || !kf_kfree ||
         !kf_memset || !kf_get_random_u32)
