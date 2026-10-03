@@ -1,22 +1,22 @@
 # BBRv3 PJZ110 KPM
 
 This module is a direct KPM port of the BBRv3 path previously used by
-\`Zhanfg/TCP_Optimiser_RS\` for OnePlus 13 / PJZ110.
+`Zhanfg/TCP_Optimiser_RS` for OnePlus 13 / PJZ110.
 
 ## Provenance
 
-- OnePlus common kernel: \`e1b346b6b4f4096eb342ae3684838a942fd6f6c4\`
+- OnePlus common kernel: `e1b346b6b4f4096eb342ae3684838a942fd6f6c4`
   - public PJZ110 16.0.9.401 source
-- BBRv3: \`hrimfaxi/tcp_bbr_modules@c5c557584175b5fed8939bf91ec249aed158597d\`
-- KPM name: \`kpm-bbr3-pjz110\`
-- Version: \`1.0.0-alpha1\`
+- BBRv3: `hrimfaxi/tcp_bbr_modules@c5c557584175b5fed8939bf91ec249aed158597d`
+- KPM name: `kpm-bbr3-pjz110`
+- Version: `1.0.0-alpha1`
 
 This is the real BBRv3 congestion-control implementation. It is not the
-stock BBR implementation renamed to \`bbr3\`.
+stock BBR implementation renamed to `bbr3`.
 
 ## Why KPM
 
-The previous \`.ko\` route depended on GKI/KMI symbol CRCs and exact module ABI.
+The previous `.ko` route depended on GKI/KMI symbol CRCs and exact module ABI.
 The KPM port keeps the BBRv3 TCP data path but resolves the small set of
 ABI-sensitive kernel services at runtime through KernelPatch kallsyms.
 
@@ -34,25 +34,25 @@ so this alpha must be verified on-device before enabling at boot.
 
 After loading the KPM, verify:
 
-\`\`\`sh
+```sh
 cat /proc/sys/net/ipv4/tcp_available_congestion_control
 cat /proc/sys/net/ipv4/tcp_congestion_control
-\`\`\`
+```
 
 Expected after registration:
 
-\`\`\`text
+```text
 ... bbr3 ...
-\`\`\`
+```
 
 Switching the default CC can then be done through the existing
 TCP_Optimiser_RS runtime or ordinary sysctl tooling.
 
 KPM control command:
 
-\`\`\`text
+```text
 status
-\`\`\`
+```
 
 returns registration state, active BBRv3 socket count, ECN mode and runtime
 bridge state.
@@ -63,12 +63,12 @@ bridge state.
 
 Current KernelPatch invokes KPM exit callbacks while holding an RCU read lock
 and frees the KPM regardless of the exit return value. Linux
-\`tcp_unregister_congestion_control()\` waits for an RCU grace period and
+`tcp_unregister_congestion_control()` waits for an RCU grace period and
 existing TCP sockets may retain congestion-control callback pointers.
 
 That combination makes generic hot-unload unsafe for a KPM that provides a
-\`tcp_congestion_ops\` implementation. The exit callback therefore reports
-\`-EBUSY\`; this version is intentionally treated as reboot-only.
+`tcp_congestion_ops` implementation. The exit callback therefore reports
+`-EBUSY`; this version is intentionally treated as reboot-only.
 
 Do not configure boot auto-load until a manual load has passed the PJZ110
 runtime validation.
