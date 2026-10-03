@@ -2,6 +2,13 @@ name: PJZ110 BBRv3 KPM
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - modules/bbr3_pjz110/**
+      - CMakeLists.txt
+      - .github/workflows/bbr3-pjz110-kpm.yml
   push:
     branches:
       - feat/pjz110-bbr3-kpm
