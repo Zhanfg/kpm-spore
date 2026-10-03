@@ -57,7 +57,6 @@
  * otherwise TCP stack falls back to an internal pacing using one high
  * resolution timer per TCP socket and may use more resources.
  */
-#include <linux/version.h>
 #include <linux/module.h>
 #include <compiler.h>
 #include <kpmodule.h>
