@@ -67,6 +67,85 @@
 
 #include "bbr_compat.h"
 
+typedef void *(*bbr3_kmalloc_fn_t)(size_t size, gfp_t flags);
+typedef void (*bbr3_kfree_fn_t)(const void *ptr);
+typedef void *(*bbr3_memset_fn_t)(void *ptr, int value, size_t size);
+typedef u32 (*bbr3_random_u32_fn_t)(void);
+
+static bbr3_kmalloc_fn_t kf___kmalloc;
+static bbr3_kfree_fn_t kf_kfree;
+static bbr3_memset_fn_t kf_memset;
+static bbr3_random_u32_fn_t kf_get_random_u32;
+static volatile unsigned long *kv_jiffies;
+
+static inline void *bbr3_kzalloc(size_t size, gfp_t flags)
+{
+    void *ptr;
+
+    if (!kf___kmalloc || !kf_memset)
+        return NULL;
+
+    ptr = kf___kmalloc(size, flags);
+    if (ptr)
+        kf_memset(ptr, 0, size);
+    return ptr;
+}
+
+static inline void bbr3_kfree(const void *ptr)
+{
+    if (ptr && kf_kfree)
+        kf_kfree(ptr);
+}
+
+/*
+ * BBR only needs bounded randomization for probe timing.  Multiply-high maps
+ * a uniform u32 onto [0, ceil) without introducing extra kernel dependencies.
+ */
+static inline u32 bbr3_random_u32_below(u32 ceil)
+{
+    u64 product;
+
+    if (!ceil || !kf_get_random_u32)
+        return 0;
+    product = (u64)kf_get_random_u32() * (u64)ceil;
+    return (u32)(product >> 32);
+}
+
+/* Redirect Kbuild-only direct dependencies through runtime-resolved pointers. */
+#define jiffies (*kv_jiffies)
+#undef kzalloc
+#define kzalloc(size, flags) bbr3_kzalloc((size), (flags))
+#undef kfree
+#define kfree(ptr) bbr3_kfree((ptr))
+
+/*
+ * WARN_ONCE emits __bug_table/__warn_printk references which KPatch-Next does
+ * not export to KPMs.  Keep the condition semantics while dropping diagnostics.
+ */
+#undef WARN_ONCE
+#define WARN_ONCE(condition, fmt...) unlikely(!!(condition))
+#undef WARN_ON_ONCE
+#define WARN_ON_ONCE(condition) unlikely(!!(condition))
+
+static int bbr3_resolve_kernel_deps(void)
+{
+    if (!kp_kallsyms_lookup_name)
+        return -ENOENT;
+
+    kv_jiffies = (volatile unsigned long *)kp_kp_kallsyms_lookup_name("jiffies");
+    kf___kmalloc = (bbr3_kmalloc_fn_t)kp_kp_kallsyms_lookup_name("__kmalloc");
+    kf_kfree = (bbr3_kfree_fn_t)kp_kp_kallsyms_lookup_name("kfree");
+    kf_memset = (bbr3_memset_fn_t)kp_kp_kallsyms_lookup_name("memset");
+    kf_get_random_u32 =
+        (bbr3_random_u32_fn_t)kp_kp_kallsyms_lookup_name("get_random_u32");
+
+    if (!kv_jiffies || !kf___kmalloc || !kf_kfree ||
+        !kf_memset || !kf_get_random_u32)
+        return -ENOENT;
+
+    return 0;
+}
+
 typedef int (*bbr3_register_fn_t)(struct tcp_congestion_ops *);
 typedef void (*bbr3_unregister_fn_t)(struct tcp_congestion_ops *);
 
@@ -1597,10 +1676,10 @@ static void bbr_pick_probe_wait(struct sock *sk)
 
 	/* Decide the random round-trip bound for wait until probe: */
 	bbr->rounds_since_probe =
-		get_random_u32_below(bbr_param(sk, bw_probe_rand_rounds));
+		bbr3_random_u32_below(bbr_param(sk, bw_probe_rand_rounds));
 	/* Decide the random wall clock bound for wait until probe: */
 	bbr->probe_wait_us = bbr_param(sk, bw_probe_base_us) +
-			     get_random_u32_below(bbr_param(sk, bw_probe_rand_us));
+			     bbr3_random_u32_below(bbr_param(sk, bw_probe_rand_us));
 }
 
 static void bbr_set_cycle_idx(struct sock *sk, int cycle_idx)
@@ -2501,11 +2580,11 @@ static int bbr_register(void)
 
     if (!kf_tcp_register_congestion_control) {
         kf_tcp_register_congestion_control =
-            (bbr3_register_fn_t)kallsyms_lookup_name("tcp_register_congestion_control");
+            (bbr3_register_fn_t)kp_kallsyms_lookup_name("tcp_register_congestion_control");
     }
     if (!kf_tcp_unregister_congestion_control) {
         kf_tcp_unregister_congestion_control =
-            (bbr3_unregister_fn_t)kallsyms_lookup_name("tcp_unregister_congestion_control");
+            (bbr3_unregister_fn_t)kp_kallsyms_lookup_name("tcp_unregister_congestion_control");
     }
     if (!kf_tcp_register_congestion_control ||
         !kf_tcp_unregister_congestion_control)
@@ -2535,10 +2614,27 @@ static void bbr_unregister(void)
 }
 
 KPM_NAME("kpm-bbr3-pjz110");
-KPM_VERSION("0.1.0");
+KPM_VERSION("0.2.0");
 KPM_LICENSE("Dual BSD/GPL");
 KPM_AUTHOR("Axymorrsen + BBR upstream");
 KPM_DESCRIPTION("Real BBRv3 congestion control KPM for OnePlus 13 PJZ110 Linux 6.6");
+
+static bool bbr3_args_enable_ecn_low(const char *args)
+{
+    static const char key[] = "ecn_low=1";
+    int i, j;
+
+    if (!args)
+        return false;
+
+    for (i = 0; args[i]; i++) {
+        for (j = 0; key[j] && args[i + j] == key[j]; j++)
+            ;
+        if (!key[j])
+            return true;
+    }
+    return false;
+}
 
 static long bbr3_kpm_init(const char *args, const char *event, void *__user reserved)
 {
@@ -2551,13 +2647,17 @@ static long bbr3_kpm_init(const char *args, const char *event, void *__user rese
         return -ENODEV;
 
     bbr_ecn_low = false;
-    if (args && strstr(args, "ecn_low=1"))
+    if (bbr3_args_enable_ecn_low(args))
         bbr_ecn_low = true;
 
+    ret = bbr3_resolve_kernel_deps();
+    if (ret)
+        return ret;
+
     kf_tcp_register_congestion_control =
-        (bbr3_register_fn_t)kallsyms_lookup_name("tcp_register_congestion_control");
+        (bbr3_register_fn_t)kp_kallsyms_lookup_name("tcp_register_congestion_control");
     kf_tcp_unregister_congestion_control =
-        (bbr3_unregister_fn_t)kallsyms_lookup_name("tcp_unregister_congestion_control");
+        (bbr3_unregister_fn_t)kp_kallsyms_lookup_name("tcp_unregister_congestion_control");
 
     if (!kf_tcp_register_congestion_control ||
         !kf_tcp_unregister_congestion_control)
