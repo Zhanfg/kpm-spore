@@ -92,8 +92,23 @@ jobs:
           set -euxo pipefail
           KPM=build/bbr3_pjz110/bbr3_pjz110.kpm
           STRIP=llvm-strip-18
+          OBJCOPY=llvm-objcopy-18
           READELF=llvm-readelf-18
           NM=llvm-nm-18
+
+          # KPatch-Next loads an ET_REL directly and never runs Linux boot-time
+          # alternatives/unwind/module metadata. Keep the universal fallback
+          # instructions in .text and drop only their boot-time metadata.
+          "$OBJCOPY" \
+            --remove-section=.altinstructions \
+            --remove-section=.rela.altinstructions \
+            --remove-section=__bug_table \
+            --remove-section=.rela__bug_table \
+            --remove-section=.eh_frame \
+            --remove-section=.rela.eh_frame \
+            --remove-section=.note.gnu.property \
+            --remove-section=.llvm_addrsig \
+            "$KPM"
 
           "$STRIP" -g --strip-unneeded --strip-debug \
             --remove-section=.comment \
@@ -113,10 +128,41 @@ jobs:
           strings "$KPM" | grep -F 'name=kpm-bbr3-pjz110'
           strings "$KPM" | grep -F 'bbr3'
 
-          # Registration must be dynamic through KernelPatch, never a static
-          # KMI/module import as in the old KO path.
+          # KPatch-Next's KPM loader resolves undefined symbols only through
+          # its own symbol table. All Linux symbols must therefore be reached
+          # indirectly through the exported kallsyms_lookup_name pointer.
+          "$NM" -u "$KPM" | awk '{print $NF}' | sort -u > bbr3-pjz110-undefined-names.txt
+          printf '%s\n' kallsyms_lookup_name kver | sort -u > allowed-kpatch-symbols.txt
+          diff -u allowed-kpatch-symbols.txt bbr3-pjz110-undefined-names.txt
+
           ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_register_congestion_control'
           ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_unregister_congestion_control'
+          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -Eq '^(jiffies|__kmalloc|kfree|memset|get_random_u32|__warn_printk|__stack_chk_fail|alt_cb_patch_nops)
+          # A KPM must not carry Linux module entry/refcount machinery.
+          ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx '__this_module'
+          ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx 'init_module'
+          ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx 'cleanup_module'
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          cp build/bbr3_pjz110/bbr3_pjz110.kpm dist/
+          cp modules/bbr3_pjz110/README.md dist/
+          cp bbr3-pjz110-elf.txt dist/
+          cp bbr3-pjz110-sections.txt dist/
+          cp bbr3-pjz110-undefined.txt dist/
+          cp bbr3-pjz110-undefined-names.txt dist/
+          (cd dist && sha256sum bbr3_pjz110.kpm > bbr3_pjz110.kpm.sha256)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pjz110-bbr3-kpm
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
 
           # A KPM must not carry Linux module entry/refcount machinery.
           ! "$NM" "$KPM" | awk '{print $NF}' | grep -qx '__this_module'
