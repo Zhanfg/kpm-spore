@@ -18,7 +18,7 @@
     __attribute__((section(".kpm.info"), aligned(1))) = #field "=" value
 
 #define KPM_NAME_LEN 32
-#define KPM_VERSION_LEN 32
+#define KPM_VERSION_LEN 12
 #define KPM_LICENSE_LEN 32
 #define KPM_AUTHOR_LEN 32
 #define KPM_DESCRIPTION_LEN 512
@@ -39,5 +39,6 @@ typedef long (*kpm_exitcall_t)(void *reserved);
 
 /* Symbols exported by the KernelPatch runtime to KPM relocations. */
 extern unsigned int kver;
+extern unsigned long (*kallsyms_lookup_name)(const char *name);
 
 #endif
