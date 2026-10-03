@@ -80,7 +80,7 @@ jobs:
           # KPM metadata because there is no MODULE_LICENSE()/__this_module.
           make -C "$KERNEL" -j"$(nproc)" \
             ARCH=arm64 LLVM=-18 LLVM_IAS=1 \
-            M="$MOD" "$MOD/bbr3_pjz110.o"
+            M="$MOD" bbr3_pjz110.o
 
           test -s "$MOD/bbr3_pjz110.o"
           mkdir -p build/bbr3_pjz110
