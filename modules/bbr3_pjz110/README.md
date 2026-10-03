@@ -1,6 +1,6 @@
 # PJZ110 BBRv3 KPM
 
-Real BBRv3 data path packaged as a KernelPatch Module for OnePlus 13 (PJZ110) Linux 6.6.
+Real BBRv3 data path packaged as a KPatch-Next-compatible KernelPatch Module for OnePlus 13 (PJZ110) Linux 6.6.
 
 ## Source pins
 
@@ -12,6 +12,8 @@ This is not a renamed BBRv1 implementation. The full upstream `tcp_bbr3.c` algor
 ## KPM adaptation
 
 - replaces Linux `module_init/module_exit` with `KPM_INIT/KPM_EXIT`
+- constrains undefined ELF symbols to the KPatch-Next ABI (`kver` + exported `kallsyms_lookup_name`)
+- resolves Linux kernel data/functions (`jiffies`, allocator, RNG, TCP registration) at KPM init time
 - resolves `tcp_register_congestion_control` and `tcp_unregister_congestion_control` through KernelPatch kallsyms
 - preserves the previously verified PJZ110 compatibility map
 - keeps the previous safe fallback for trimmed PLB / ACK helpers
@@ -45,4 +47,10 @@ Expected available list contains `bbr3`. Switching the default CC remains a user
 
 ## Safety
 
-This first version is intentionally PJZ110-specific. Do not autoload it on unrelated 6.6 kernels until their TCP structure/API compatibility has been verified.
+This build is intentionally PJZ110-specific. Do not autoload it on unrelated 6.6 kernels until their TCP structure/API compatibility has been verified.
+
+### Important: do not unload after use
+
+KPatch-Next frees a KPM after calling its exit callback and does not provide Linux module refcount semantics. Existing TCP sockets may still hold congestion-control function pointers after `tcp_unregister_congestion_control()`.
+
+For that reason, once `bbr3` has been selected by any live socket, **do not unload this KPM during the same boot**. Restore the default congestion-control policy if needed, then reboot before removing/replacing the KPM.
