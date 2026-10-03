@@ -2537,7 +2537,7 @@ static void bbr_unregister(void)
 KPM_NAME("kpm-bbr3-pjz110");
 KPM_VERSION("0.1.0");
 KPM_LICENSE("Dual BSD/GPL");
-KPM_AUTHOR("Axymorrsen / upstream BBR authors");
+KPM_AUTHOR("Axymorrsen + BBR upstream");
 KPM_DESCRIPTION("Real BBRv3 congestion control KPM for OnePlus 13 PJZ110 Linux 6.6");
 
 static long bbr3_kpm_init(const char *args, const char *event, void *__user reserved)
