@@ -58,10 +58,7 @@
  * resolution timer per TCP socket and may use more resources.
  */
 #include <linux/module.h>
-#include <compiler.h>
-#include <kpmodule.h>
-#include <common.h>
-#include <kputils.h>
+#include "kpm_abi.h"
 #include <net/tcp.h>
 #include <linux/inet_diag.h>
 #include <linux/inet.h>
@@ -2550,10 +2547,8 @@ static long bbr3_kpm_init(const char *args, const char *event, void *__user rese
     (void)event;
     (void)reserved;
 
-    if (kver < 0x60600 || kver >= 0x60700) {
-        pr_err("[bbr3-kpm] unsupported kernel version: 0x%x (PJZ110 6.6 only)\n", kver);
+    if (kver < 0x60600 || kver >= 0x60700)
         return -ENODEV;
-    }
 
     bbr_ecn_low = false;
     if (args && strstr(args, "ecn_low=1"))
@@ -2565,40 +2560,13 @@ static long bbr3_kpm_init(const char *args, const char *event, void *__user rese
         (bbr3_unregister_fn_t)kallsyms_lookup_name("tcp_unregister_congestion_control");
 
     if (!kf_tcp_register_congestion_control ||
-        !kf_tcp_unregister_congestion_control) {
-        pr_err("[bbr3-kpm] required TCP registration symbols missing\n");
+        !kf_tcp_unregister_congestion_control)
         return -ENOENT;
-    }
 
     ret = bbr_register();
-    if (ret) {
-        pr_err("[bbr3-kpm] registration failed: %d\n", ret);
+    if (ret)
         return ret;
-    }
 
-    pr_info("[bbr3-kpm] registered real BBRv3 as 'bbr3', ecn_low=%d\n",
-            bbr_ecn_low ? 1 : 0);
-    return 0;
-}
-
-static long bbr3_kpm_control0(const char *args, char *__user out_msg, int outlen)
-{
-    const char *response;
-
-    (void)args;
-
-    if (bbr3_registered)
-        response = bbr_ecn_low ?
-            "bbr3: registered; ecn_low=1" :
-            "bbr3: registered; ecn_low=0";
-    else
-        response = "bbr3: not registered";
-
-    if (out_msg && outlen > 0) {
-        int len = strlen(response) + 1;
-        int copy_len = len < outlen ? len : outlen;
-        compat_copy_to_user(out_msg, response, copy_len);
-    }
     return 0;
 }
 
@@ -2606,10 +2574,8 @@ static long bbr3_kpm_exit(void *__user reserved)
 {
     (void)reserved;
     bbr_unregister();
-    pr_info("[bbr3-kpm] unregistered\n");
     return 0;
 }
 
 KPM_INIT(bbr3_kpm_init);
-KPM_CTL0(bbr3_kpm_control0);
 KPM_EXIT(bbr3_kpm_exit);
