@@ -39,6 +39,5 @@ typedef long (*kpm_exitcall_t)(void *reserved);
 
 /* Symbols exported by the KernelPatch runtime to KPM relocations. */
 extern unsigned int kver;
-extern unsigned long (*kallsyms_lookup_name)(const char *name);
 
 #endif
