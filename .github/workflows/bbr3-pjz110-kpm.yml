@@ -1,0 +1,84 @@
+name: PJZ110 BBRv3 KPM
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/pjz110-bbr3-kpm
+    paths:
+      - modules/bbr3_pjz110/**
+      - CMakeLists.txt
+      - .github/workflows/bbr3-pjz110-kpm.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bbr3-pjz110-kpm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ANDROID_NDK_VERSION: 28.2.13676358
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Android NDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          NDK_PATH="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          if [ ! -d "$NDK_PATH" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION"
+          fi
+          echo "NDK_PATH=$NDK_PATH" >> "$GITHUB_ENV"
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -B build
+
+      - name: Build PJZ110 BBRv3 KPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build build --target bbr3_pjz110 -j"$(nproc)"
+          test -s build/bbr3_pjz110/bbr3_pjz110.kpm
+
+      - name: Audit KPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KPM=build/bbr3_pjz110/bbr3_pjz110.kpm
+          READELF="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          NM="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$READELF" -S "$KPM" | tee bbr3-pjz110-sections.txt
+          "$NM" -u "$KPM" | tee bbr3-pjz110-undefined.txt
+          "$READELF" -S "$KPM" | grep -F '.kpm'
+          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_register_congestion_control'
+          ! "$NM" -u "$KPM" | awk '{print $NF}' | grep -qx 'tcp_unregister_congestion_control'
+          strings "$KPM" | grep -F 'kpm-bbr3-pjz110'
+          strings "$KPM" | grep -F 'bbr3'
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          cp build/bbr3_pjz110/bbr3_pjz110.kpm dist/bbr3_pjz110.kpm
+          cp modules/bbr3_pjz110/README.md dist/README.md
+          cp bbr3-pjz110-sections.txt dist/
+          cp bbr3-pjz110-undefined.txt dist/
+          (cd dist && sha256sum bbr3_pjz110.kpm > bbr3_pjz110.kpm.sha256)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pjz110-bbr3-kpm
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
