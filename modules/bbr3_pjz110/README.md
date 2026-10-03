@@ -1,3 +1,9 @@
+# ⚠️ UNSAFE — DO NOT LOAD ON DEVICE
+
+**This experimental BBRv3 KPM caused a hard device failure on PJZ110, including a Qualcomm 9008/EDL recovery event. Do not load any generated `.kpm` artifact from this branch.**
+
+The implementation is retained only for postmortem analysis. Runtime loading is suspended until the design is replaced with an ABI-safe approach validated against the exact running kernel build.
+
 # PJZ110 BBRv3 KPM
 
 Real BBRv3 data path packaged as a KPatch-Next-compatible KernelPatch Module for OnePlus 13 (PJZ110) Linux 6.6.
