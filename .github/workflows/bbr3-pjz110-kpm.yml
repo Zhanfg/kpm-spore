@@ -1,0 +1,60 @@
+name: BBRv3 PJZ110 KPM
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/bbr3-pjz110-kpm
+    paths:
+      - 'modules/bbr3_pjz110/**'
+      - 'scripts/build-bbr3-pjz110-kpm.sh'
+      - 'scripts/patch-bbr3-pjz110-kpm.py'
+      - '.github/workflows/bbr3-pjz110-kpm.yml'
+      - 'docs/bbr3-pjz110-kpm.md'
+  pull_request:
+    paths:
+      - 'modules/bbr3_pjz110/**'
+      - 'scripts/build-bbr3-pjz110-kpm.sh'
+      - 'scripts/patch-bbr3-pjz110-kpm.py'
+      - '.github/workflows/bbr3-pjz110-kpm.yml'
+      - 'docs/bbr3-pjz110-kpm.md'
+
+concurrency:
+  group: bbr3-pjz110-kpm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential clang-18 flex git libelf-dev libssl-dev \
+            lld-18 llvm-18 pahole python3 rsync
+
+      - name: Build real BBRv3 KPM
+        run: |
+          chmod +x scripts/build-bbr3-pjz110-kpm.sh
+          scripts/build-bbr3-pjz110-kpm.sh
+
+      - name: Inspect artifact
+        run: |
+          cat dist/bbr3-pjz110-kpm/manifest.txt
+          cat dist/bbr3-pjz110-kpm/undefined-symbols.txt
+          cat dist/bbr3-pjz110-kpm/SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bbr3-pjz110-kpm-1.0.0-alpha1
+          path: dist/bbr3-pjz110-kpm/
+          if-no-files-found: error
+          retention-days: 30
